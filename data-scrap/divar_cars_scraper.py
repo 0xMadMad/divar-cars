@@ -67,19 +67,14 @@ FIELD_KEYWORDS = {
 }
 
 
-CITY_IDS = ["25",]  #  "1", "6", "4"
-CITY_SLUGS = {
-    "25": "bushehr",
-    # "1": "tehran",
-    # "6": "shiraz",
-    # "4": "isfahan",
-}
+# 1:teh, 4:isf, 6:shz, 25:bu
+CITY_IDS = ["1",]  #  "1", "4", "6", "25"
 
 
 CATEGORY_SLUG = "light"  # light cars
 CATEGORY_URL_SLUG = "car"
 
-TARGETED_QUERY = None  # e.g. "ساینا", None by default
+TARGETED_QUERY = "ساینا"  # e.g. "ساینا", None for no target
 
 
 DATA_DIR = Path("data-scrap") / "data"
@@ -89,7 +84,7 @@ DETAILS_SUCCESS_PATH = DATA_DIR / "details_success.csv"
 PENDING_TOKENS_PATH = DATA_DIR / "failed_tokens.csv"
 
 
-MAX_SEARCH_PAGES = 1
+MAX_SEARCH_PAGES = 5
 MAX_RETRY_ROUNDS = 5
 
 MIN_DELAY = 2.0
@@ -173,35 +168,6 @@ def extract_post_fields(widget: dict) -> dict:
         "posted_time_text": data.get("bottom_description_text"),
         "sort_date": server_info.get("sort_date"),
         "image_count": data.get("image_count"),
-        "scraped_at": datetime.now().isoformat(),
-    }
-
-
-def extract_post_fields_from_html_item(item: dict) -> dict:
-    dto_data = item.get("data", {}).get("dto", {}).get("data", {})
-    if not dto_data:
-        return {}
-
-    price_text = dto_data.get("middle_description_text", "")
-    price_value, price_status = parse_price(price_text)
-
-    mileage_text = dto_data.get("top_description_text", "")
-    mileage_value = parse_mileage(mileage_text)
-
-    web_info = dto_data.get("action", {}).get("payload", {}).get("web_info", {})
-
-    return {
-        "token": dto_data.get("token"),
-        "title": dto_data.get("title"),
-        "price_text_raw": price_text,
-        "price_toman": price_value,
-        "price_status": price_status,
-        "mileage_text_raw": mileage_text,
-        "mileage_km": mileage_value,
-        "city_persian": web_info.get("city_persian"),
-        "district_persian": web_info.get("district_persian"),
-        "posted_time_text": dto_data.get("bottom_description_text"),
-        "image_count": dto_data.get("image_count"),
         "scraped_at": datetime.now().isoformat(),
     }
 
@@ -328,12 +294,6 @@ def build_detail_url(token: str, title: str = "x") -> str:
     slug = urllib.parse.quote(clean_title) if clean_title else "x"
     return f"https://divar.ir/v/{slug}/{token}"
 
-def build_search_html_url(query: str, city_slug: str, category_url_slug: str = CATEGORY_URL_SLUG) -> str:
-    encoded_query = urllib.parse.quote(query)
-    return f"https://divar.ir/s/{city_slug}/{category_url_slug}?q={encoded_query}"
-
-
-
 
 @retry(
     stop=stop_after_attempt(MAX_RETRIES),
@@ -385,37 +345,6 @@ def fetch_post_detail(token: str, title: str = "x") -> dict:
         raise DetailFetchError(f"Token mismatch: requested {token}, page contained {returned_token}.")
 
     return post
-
-
-@retry(
-    stop=stop_after_attempt(MAX_RETRIES),
-    wait=wait_exponential(multiplier=RETRY_BACKOFF_BASE, min=RETRY_BACKOFF_BASE),
-    retry=retry_if_exception_type((requests.RequestException, DetailFetchError, json.JSONDecodeError)),
-    reraise=True,
-)
-def fetch_search_page_html(query: str, city_slug: str, category_url_slug: str = CATEGORY_URL_SLUG) -> list:
-    url = build_search_html_url(query, city_slug, category_url_slug)
-    logger.info(f"  -> {url}")
-
-    resp = session.get(url, headers=get_random_headers(), timeout=15)
-    if resp.status_code == 429:
-        retry_after = resp.headers.get("Retry-After")
-        wait_s = float(retry_after) if retry_after else RETRY_BACKOFF_BASE * 5
-        logger.warning(f"    429 rate-limited on search query {query!r}, waiting {wait_s:.0f}s")
-        time.sleep(wait_s)
-        raise DetailFetchError(f"Rate limited (429) for search query {query!r}")
-    resp.raise_for_status()
-
-    match = PRELOADED_STATE_PATTERN.search(resp.text)
-    if not match:
-        raise DetailFetchError(
-            f"__PRELOADED_STATE__ not found for search query {query!r} - "
-            f"page length {len(resp.text)} chars, status {resp.status_code}."
-        )
-
-    state = json.loads(match.group(1))
-    list_widgets = state.get("nb", {}).get("listWidgets", [])
-    return list_widgets
 
 
 def _iter_section_widgets(sections, section_name: str):
@@ -524,7 +453,7 @@ def fetch_all_post_details_until_done(records: list, max_rounds: int = 5) -> lis
 
 
 
-def build_search_payload(pagination_state: dict = None) -> dict:
+def build_search_payload(pagination_state: dict = None, query: str = None) -> dict:
     payload = {
         "city_ids": CITY_IDS,
         "disable_recommendation": False,
@@ -541,6 +470,8 @@ def build_search_payload(pagination_state: dict = None) -> dict:
             }
         },
     }
+    if query:
+        payload["search_data"]["query"] = query
 
     if pagination_state:
         payload["pagination_data"] = {
@@ -568,8 +499,8 @@ def build_search_payload(pagination_state: dict = None) -> dict:
     return payload
 
 
-def fetch_search_page(pagination_state: dict = None) -> dict:
-    payload = build_search_payload(pagination_state)
+def fetch_search_page(pagination_state: dict = None, query: str = None) -> dict:
+    payload = build_search_payload(pagination_state, query)
     
     resp = session.post(SEARCH_URL, headers=SEARCH_HEADERS, json=payload, timeout=15)
     if resp.status_code == 429:
@@ -595,14 +526,14 @@ def build_next_pagination_state(result: dict, current_state: dict = None) -> dic
     }
 
 
-def scrape_all_pages(max_pages: int = 10):
+def scrape_all_pages(max_pages: int = 10, query: str = None):
     all_records = []
     pagination_state = None
 
     for page_num in range(1, max_pages + 1):
         logger.info(f"Fetching page {page_num}...")
         try:
-            result = fetch_search_page(pagination_state)
+            result = fetch_search_page(pagination_state, query)
         except requests.RequestException as e:
             logger.error(f"  Error: {e}")
             break
@@ -625,33 +556,6 @@ def scrape_all_pages(max_pages: int = 10):
             break
 
         pagination_state = build_next_pagination_state(result, pagination_state)
-        polite_sleep()
-
-    return all_records
-
-
-def scrape_search_by_query(query: str, city_ids: list = None, category_url_slug: str = CATEGORY_URL_SLUG) -> list:
-    if city_ids is None:
-        city_ids = CITY_IDS
-
-    all_records = []
-    for city_id in city_ids:
-        city_slug = CITY_SLUGS.get(city_id)
-        if not city_slug:
-            logger.warning(f"No slug mapping found for city_id {city_id!r} - skipping.")
-            continue
-
-        list_widgets = fetch_search_page_html(query, city_slug, category_url_slug)
-        city_records = []
-        for item in list_widgets:
-            if item.get("data", {}).get("widgetType") != "POST_ROW":
-                continue
-            extracted = extract_post_fields_from_html_item(item)
-            if extracted:
-                city_records.append(extracted)
-
-        logger.info(f"Query {query!r} in {city_slug}/{category_url_slug}: got {len(city_records)} listings.")
-        all_records.extend(city_records)
         polite_sleep()
 
     return all_records
@@ -715,35 +619,21 @@ def query_result_paths(query: str) -> tuple:
 
 
 if __name__ == "__main__":
-    records = scrape_all_pages(max_pages=MAX_SEARCH_PAGES)
+    if TARGETED_QUERY:
+        search_path, details_path = query_result_paths(TARGETED_QUERY)
+    else:
+        search_path, details_path = SEARCH_RESULTS_PATH, DETAILS_SUCCESS_PATH
 
-    existing_search_tokens = load_existing_tokens(SEARCH_RESULTS_PATH)
+    records = scrape_all_pages(max_pages=MAX_SEARCH_PAGES, query=TARGETED_QUERY)
+
+    existing_search_tokens = load_existing_tokens(search_path)
     new_records = [r for r in records if r.get("token") not in existing_search_tokens]
-    append_to_csv(new_records, SEARCH_RESULTS_PATH)
+    append_to_csv(new_records, search_path)
 
-    already_done = load_existing_tokens(DETAILS_SUCCESS_PATH)
+    already_done = load_existing_tokens(details_path)
     records_with_tokens = [r for r in records if r.get("token") and r["token"] not in already_done]
     details = fetch_all_post_details_until_done(records_with_tokens, max_rounds=MAX_RETRY_ROUNDS)
 
-    append_to_csv(details, DETAILS_SUCCESS_PATH)
+    append_to_csv(details, details_path)
 
-    if TARGETED_QUERY:
-        polite_sleep()
-        logger.info(f"Running targeted query search: {TARGETED_QUERY!r}")
-        query_search_path, query_details_path = query_result_paths(TARGETED_QUERY)
-
-        query_records = scrape_search_by_query(TARGETED_QUERY)
-
-        existing_query_tokens = load_existing_tokens(query_search_path)
-        new_query_records = [r for r in query_records if r.get("token") not in existing_query_tokens]
-        append_to_csv(new_query_records, query_search_path)
-
-        already_done_query = load_existing_tokens(query_details_path)
-        query_records_with_tokens = [
-            r for r in query_records if r.get("token") and r["token"] not in already_done_query
-        ]
-        query_details = fetch_all_post_details_until_done(query_records_with_tokens, max_rounds=MAX_RETRY_ROUNDS)
-
-        append_to_csv(query_details, query_details_path)
-
-#MadMad_749
+#MadMad_639
