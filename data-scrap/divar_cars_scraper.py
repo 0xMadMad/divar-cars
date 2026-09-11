@@ -14,11 +14,12 @@ from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_excep
 
 
 
+LOG_FILE_PATH = Path(__file__).resolve().parent / "scraper.log"
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
     handlers=[
-        logging.FileHandler("data-scrap\\scraper.log", encoding="utf-8"),
+        logging.FileHandler(LOG_FILE_PATH, encoding="utf-8"),
         logging.StreamHandler(),
     ],
 )
@@ -642,4 +643,4 @@ if __name__ == "__main__":
 
     append_to_csv(details, details_path)
 
-#MadMad_645
+#MadMad_646
