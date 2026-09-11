@@ -18,7 +18,7 @@ logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
     handlers=[
-        logging.FileHandler("scraper.log", encoding="utf-8"),
+        logging.FileHandler("data-scrap\\scraper.log", encoding="utf-8"),
         logging.StreamHandler(),
     ],
 )
@@ -84,8 +84,8 @@ DETAILS_SUCCESS_PATH = DATA_DIR / "details_success.csv"
 PENDING_TOKENS_PATH = DATA_DIR / "failed_tokens.csv"
 
 
-MAX_SEARCH_PAGES = 5
-MAX_RETRY_ROUNDS = 5
+MAX_SEARCH_PAGES = 6
+MAX_RETRY_ROUNDS = 6
 
 MIN_DELAY = 2.0
 MAX_DELAY = 4.5
@@ -212,7 +212,7 @@ def extract_post_detail_fields(post: dict) -> dict:
 
     mileage_text = year_text = color = None
     brand_model_text = gearbox = fuel_type = base_price_text = None
-    engine_score = chassis_score = body_score = gearbox_score = None
+    engine_score = chassis_front_score = chassis_rear_score = body_score = gearbox_score = None
 
     for wtype, wdata in _iter_section_widgets(sections, "LIST_DATA"):
         if wtype == "GROUP_INFO_ROW":
@@ -243,8 +243,13 @@ def extract_post_detail_fields(post: dict) -> dict:
             score = wdata.get("descriptive_score", "")
             if FIELD_KEYWORDS["engine_score"] in row_title:
                 engine_score = score
+            elif "شاسی جلو" in row_title:
+                chassis_front_score = score
+            elif "شاسی عقب" in row_title:
+                chassis_rear_score = score
             elif FIELD_KEYWORDS["chassis_score"] in row_title:
-                chassis_score = score
+                chassis_front_score = score
+                chassis_rear_score = score
             elif FIELD_KEYWORDS["body_score"] in row_title:
                 body_score = score
             elif FIELD_KEYWORDS["gearbox"] in row_title:
@@ -274,7 +279,8 @@ def extract_post_detail_fields(post: dict) -> dict:
         "base_price_text_raw": base_price_text,
         "base_price_toman": base_price_value,
         "engine_condition": engine_score,
-        "chassis_condition": chassis_score,
+        "chassis_front_condition": chassis_front_score,
+        "chassis_rear_condition": chassis_rear_score,
         "body_condition": body_score,
         "gearbox_condition": gearbox_score,
         "description": description_text,
@@ -636,4 +642,4 @@ if __name__ == "__main__":
 
     append_to_csv(details, details_path)
 
-#MadMad_639
+#MadMad_645
